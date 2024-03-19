@@ -8,7 +8,7 @@ Add this crate to your `Cargo.toml` file:
 
 ```toml
 [dependencies]
-crypticy = "0.1.0"
+crypticy = "*"
 ```
 
 Then, you can use the crate in your Rust code as follows:
