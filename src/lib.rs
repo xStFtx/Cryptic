@@ -1,48 +1,47 @@
-use rand::{Rng, thread_rng};
-use aes::Aes256;
-use aes::cipher::generic_array::GenericArray;
-use sha2::{Sha256, Digest};
-use aes::cipher::{KeyInit , BlockDecrypt , BlockEncrypt};
-/// Generates a random AES key.
-pub fn generate_aes_key() -> [u8; 32] {
-    let mut key = [0u8; 32];
-    thread_rng().fill(&mut key);
-    key
+use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+use argon2::{
+    password_hash::SaltString,
+    Argon2, PasswordHasher, Params, Version, Algorithm,
+};
+use generic_array::{GenericArray, typenum::U32};
+use rand::Rng;
+
+const SALT: &[u8] = b"salasasdfasft";
+const OPSLIMIT: u32 = 3;
+const MEMLIMIT: u32 = 102400;
+
+fn derive_key(password: &[u8]) -> GenericArray<u8, U32> {
+    let mut rng = rand::thread_rng();
+    let salt = SaltString::generate(&mut rng);
+    let params = Params::new(
+        OPSLIMIT,
+        MEMLIMIT,
+        OPSLIMIT,
+        None,
+    )
+    .map_err(|e| e.to_string())
+    .unwrap();
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let hash = argon2
+        .hash_password(password, &salt)
+        .map(|hash| hash.hash.unwrap().as_bytes().to_vec())
+        .unwrap();
+
+    *GenericArray::from_slice(&hash[..32])
 }
 
-/// Encrypts data using AES256.
-pub fn aes_encrypt(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
-    let cipher = Aes256::new(GenericArray::from_slice(key));
-    let mut buffer = data.to_vec();
-    let len = buffer.len();
-    let padding_len = 16 - (len % 16);
-    buffer.extend(vec![padding_len as u8; padding_len]);
-    for chunk in buffer.chunks_mut(16) {
-        cipher.encrypt_block(GenericArray::from_mut_slice(chunk));
-    }
-    buffer
+fn encrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, aes_gcm::Error> {
+    let key = derive_key(password);
+    let cipher = Aes256Gcm::new(&key.into());
+    let nonce = Nonce::from_slice(b"unique_nonce_for_this_encryption");
+    cipher.encrypt(nonce, data)
 }
 
-/// Decrypts data using AES256.
-pub fn aes_decrypt(data: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
-    if data.len() % 16 != 0 {
-        return None; // Input data length is not a multiple of block size
-    }
-    let cipher = Aes256::new(GenericArray::from_slice(key));
-    let mut buffer = data.to_vec();
-    for chunk in buffer.chunks_mut(16) {
-        cipher.decrypt_block(GenericArray::from_mut_slice(chunk));
-    }
-    let padding_len = buffer.last()?;
-    buffer.truncate(buffer.len() - *padding_len as usize);
-    Some(buffer)
-}
-
-/// Computes SHA256 hash.
-pub fn sha256_hash(data: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().to_vec()
+fn decrypt(ciphertext: &[u8], password: &[u8]) -> Result<Vec<u8>, aes_gcm::Error> {
+    let key = derive_key(password);
+    let cipher = Aes256Gcm::new(&key.into());
+    let nonce = Nonce::from_slice(b"unique_nonce_for_this_encryption");
+    cipher.decrypt(nonce, ciphertext)
 }
 
 #[cfg(test)]
@@ -50,18 +49,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_aes_encrypt_decrypt() {
-        let key = generate_aes_key();
+    fn test_encrypt_decrypt() {
+        let password = b"your-secure-password";
         let plaintext = b"Hello, World!";
-        let ciphertext = aes_encrypt(plaintext, &key);
-        let decrypted = aes_decrypt(&ciphertext, &key).unwrap();
+        let ciphertext = encrypt(plaintext, password).unwrap();
+        let decrypted = decrypt(&ciphertext, password).unwrap();
         assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn test_sha256_hash() {
-        let data = b"Hello, World!";
-        let hash = sha256_hash(data);
-        assert_eq!(hash.len(), 32);
     }
 }
